@@ -6,6 +6,7 @@ module Blacklight
   module AccessControls
     module Ability
       extend ActiveSupport::Concern
+      extend Deprecation
 
       included do
         include CanCan::Ability
@@ -78,21 +79,32 @@ module Blacklight
       end
 
       def test_discover(id)
-        Rails.logger.debug("[CANCAN] Checking discover permissions for user: #{current_user.user_key} with groups: #{user_groups.inspect}")
-        group_intersection = user_groups & discover_groups(id)
-        !group_intersection.empty? || discover_users(id).include?(current_user.user_key)
+        Deprecation.warn(self, 'Ability#test_discover(id) is deprecated; use #test_access(id, :discover) instead')
+        test_access(id, :discover)
       end
 
       def test_read(id)
-        Rails.logger.debug("[CANCAN] Checking read permissions for user: #{current_user.user_key} with groups: #{user_groups.inspect}")
-        group_intersection = user_groups & read_groups(id)
-        !group_intersection.empty? || read_users(id).include?(current_user.user_key)
+        Deprecation.warn(self, 'Ability#test_read(id) is deprecated; use #test_access(id, :read) instead')
+        test_access(id, :read)
       end
 
       def test_download(id)
-        Rails.logger.debug("[CANCAN] Checking download permissions for user: #{current_user.user_key} with groups: #{user_groups.inspect}")
-        group_intersection = user_groups & download_groups(id)
-        !group_intersection.empty? || download_users(id).include?(current_user.user_key)
+        Deprecation.warn(self, 'Ability#test_download(id) is deprecated; use #test_access(id, :download) instead')
+
+        test_access(id, :download)
+      end
+
+      def test_access(id, access_type)
+        Rails.logger.debug("[CANCAN] Checking #{access_type} permissions for user: "\
+                           "#{current_user.user_key} with groups: #{user_groups.inspect}")
+
+        if send("#{access_type}_users", id).include?(current_user.user_key)
+          return true
+        end
+
+        # TODO: when #download_groups stops including groups with only
+        # read access (see below), replace #send with #groups_with_access
+        (send("#{access_type}_groups", id) & user_groups).present?
       end
 
       # You can override this method if you are using a different AuthZ (such as LDAP)
@@ -110,56 +122,55 @@ module Blacklight
         ['public']
       end
 
-      # read implies discover, so discover_groups is the union of read and discover groups
       def discover_groups(id)
-        doc = permissions_doc(id)
-        return [] if doc.nil?
-        dg = read_groups(id) | (doc[self.class.discover_group_field] || [])
-        Rails.logger.debug("[CANCAN] discover_groups: #{dg.inspect}")
-        dg
+        Deprecation.warn(self, 'In a future release Ability#discover_groups(id) will no longer include groups with only read or download access')
+        # TODO: uncomment when above deprecation takes effect
+        # Deprecation.warn(self, 'Ability#read_groups(id) is deprecated; use #groups_with_access(id, :read) instead')
+        groups_with_access(id, :discover) | groups_with_access(id, :read) | groups_with_access(id, :download)
       end
 
-      # read implies discover, so discover_users is the union of read and discover users
       def discover_users(id)
-        doc = permissions_doc(id)
-        return [] if doc.nil?
-        dp = read_users(id) | (doc[self.class.discover_user_field] || [])
-        Rails.logger.debug("[CANCAN] discover_users: #{dp.inspect}")
-        dp
+        Deprecation.warn(self, 'In a future release Ability#discover_users(id) will no longer include users with only read or download access')
+        # Deprecation.warn(self, 'Ability#read_users(id) is deprecated; use #users_with_access(id, :read) instead')
+        users_with_access(id, :discover) | users_with_access(id, :read) | users_with_access(id, :download)
       end
 
-      # download access implies read access, so read_groups is the union of download and read groups.
       def read_groups(id)
-        doc = permissions_doc(id)
-        return [] if doc.nil?
-        rg = download_groups(id) | Array(doc[self.class.read_group_field])
-        Rails.logger.debug("[CANCAN] read_groups: #{rg.inspect}")
-        rg
+        Deprecation.warn(self, 'In a future release Ability#read_groups(id) will no longer include groups with only download access')
+        # Deprecation.warn(self, 'Ability#read_groups(id) is deprecated; use #groups_with_access(id, :read) instead')
+        groups_with_access(id, :read) | groups_with_access(id, :download)
       end
 
-      # download access implies read access, so read_users is the union of download and read users.
       def read_users(id)
-        doc = permissions_doc(id)
-        return [] if doc.nil?
-        rp = download_users(id) | Array(doc[self.class.read_user_field])
-        Rails.logger.debug("[CANCAN] read_users: #{rp.inspect}")
-        rp
-      end
-
-      def download_groups(id)
-        doc = permissions_doc(id)
-        return [] if doc.nil?
-        dg = Array(doc[self.class.download_group_field])
-        Rails.logger.debug("[CANCAN] download_groups: #{dg.inspect}")
-        dg
+        Deprecation.warn(self, 'In a future release Ability#read_users(id) will no longer include users with only download access')
+        # Deprecation.warn(self, 'Ability#read_users(id) is deprecated; use #users_with_access(id, :read) instead')
+        users_with_access(id, :download) | users_with_access(id, :read)
       end
 
       def download_users(id)
+        # Deprecation.warn(self, 'Ability#download_users(id) is deprecated; use #users_with_access(id, :download) instead')
+        users_with_access(id, :download)
+      end
+
+      def download_groups(id)
+        # Deprecation.warn(self, 'Ability#download_groups(id) is deprecated; use #groups_with_access(id, :download) instead')
+        groups_with_access(id, :download)
+      end
+
+      def users_with_access(id, access_type)
         doc = permissions_doc(id)
         return [] if doc.nil?
-        dp = Array(doc[self.class.download_user_field])
-        Rails.logger.debug("[CANCAN] download_users: #{dp.inspect}")
-        dp
+        users = Array(doc[self.class.send("#{access_type}_user_field")])
+        Rails.logger.debug("[CANCAN] users with #{access_type} access: #{users.inspect}")
+        users
+      end
+
+      def groups_with_access(id, access_type)
+        doc = permissions_doc(id)
+        return [] if doc.nil?
+        groups = Array(doc[self.class.send("#{access_type}_group_field")])
+        Rails.logger.debug("[CANCAN] groups with #{access_type} access: #{groups.inspect}")
+        groups
       end
 
       module ClassMethods

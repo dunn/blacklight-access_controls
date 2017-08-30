@@ -32,4 +32,3 @@ Metrics/LineLength:
 
 RSpec/MessageSpies:
   Enabled: false
-  
